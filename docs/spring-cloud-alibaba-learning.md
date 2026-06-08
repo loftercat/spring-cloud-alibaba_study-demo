@@ -858,3 +858,173 @@ Nacos Server ✗ (宕机)
 | Nacos 挂了，从未调用过 | 无缓存 | ❌ 不能 | 无法获取服务实例 |
 
 > 这也是为什么 Nacos 推荐**集群部署**的原因——单点故障会导致服务发现能力下降，而集群可以保证高可用。
+
+---
+
+## 学习流程七：Nacos 动态刷新参数方式
+
+### 7.1 背景
+
+在微服务中，很多配置参数（如超时时间、开关等）需要**运行时动态调整**，而不希望每次修改都要重启服务。Nacos 配置中心支持配置的动态推送，Spring Cloud Alibaba 提供了两种方式来接收并刷新这些参数。
+
+### 7.2 前置：从 Nacos 拉取配置
+
+在 `application.yaml` 中通过 `spring.config.import` 从 Nacos 拉取远程配置：
+
+```yaml
+spring:
+  application:
+    name: service-order
+  cloud:
+    nacos:
+      server-addr: 127.0.0.1:8848
+  config:
+    import: nacos:service-order.yaml   # 从 Nacos 拉取 Data ID 为 service-order.yaml 的配置
+server:
+  port: 8000
+```
+
+在 Nacos 控制台创建 `service-order.yaml` 配置，内容如下：
+
+```yaml
+order:
+  timeout: 3000
+  auto-confirm: 7d
+```
+
+> **关键点**：`spring.config.import: nacos:service-order.yaml` 是 Spring Cloud 2021+ 引入的配置导入方式，替代了旧版的 `spring.cloud.nacos.config.*` 配置。应用启动时会自动从 Nacos 拉取该配置并合并到本地配置中。
+
+### 7.3 方式一：`@RefreshScope` + `@Value`
+
+#### 原理
+
+`@RefreshScope` 是 Spring Cloud 提供的特殊作用域注解。当 Nacos 配置变更时，Spring Cloud 会发布 `RefreshEvent`，Spring 容器会**销毁并重建**带有 `@RefreshScope` 注解的 Bean，从而让 `@Value` 重新绑定最新的配置值。
+
+#### 代码示例
+
+```java
+@Slf4j
+@RefreshScope                                    // 关键注解：配置变更时重建 Bean
+@RequiredArgsConstructor
+@RestController
+@RequestMapping("/order")
+public class OrderController {
+
+    private final OrderService orderService;
+
+    @Value("${order.timeout}")                   // 从配置中注入值
+    private String timeout;
+
+    @Value("${order.auto-confirm}")              // 从配置中注入值
+    private String autoConfirm;
+
+    @RequestMapping("/config")
+    public void config() {
+        log.info("timeout: {}", timeout);
+        log.info("autoConfirm: {}", autoConfirm);
+    }
+}
+```
+
+#### 流程图
+
+```
+Nacos 配置变更
+    │
+    └─→ Spring Cloud 发布 RefreshEvent
+            │
+            └─→ @RefreshScope 标记的 Bean 被销毁
+                    │
+                    └─→ 下次访问时重新创建 Bean
+                            │
+                            └─→ @Value 重新绑定最新配置值
+```
+
+#### 优缺点
+
+| 优点 | 缺点 |
+|------|------|
+| 使用简单，只需两个注解 | Bean 会被整体销毁重建，有短暂不可用风险 |
+| 适合少量配置项 | 每个需要刷新的类都要加 `@RefreshScope` |
+| `@Value` 支持 SpEL 表达式 | 如果忘记加 `@RefreshScope`，`@Value` 不会动态刷新 |
+
+### 7.4 方式二：`@ConfigurationProperties`（推荐）
+
+#### 原理
+
+`@ConfigurationProperties` 将配置属性绑定到 Java Bean 的字段上。Spring Cloud Alibaba 默认自动支持 `@ConfigurationProperties` Bean 的动态刷新——当 Nacos 配置变更时，Spring 会**自动重新绑定**属性值到 Bean，**无需销毁重建整个 Bean**。
+
+#### 代码示例
+
+**配置类：OrderArgsAutoRefresh.java**
+```java
+@Data
+@Component
+@ConfigurationProperties(prefix = "order")       // 绑定 order.* 前缀的配置
+public class OrderArgsAutoRefresh {
+
+    private String timeout;                       // 对应 order.timeout
+
+    private String autoConfirm;                   // 对应 order.auto-confirm
+}
+```
+
+> **命名映射规则**：`autoConfirm` 字段自动映射到 `auto-confirm` 配置键（驼峰 ↔ 短横线自动转换）。
+
+**使用：OrderController.java**
+```java
+@Slf4j
+@RequiredArgsConstructor
+@RestController
+@RequestMapping("/order")
+public class OrderController {
+
+    private final OrderService orderService;
+    private final OrderArgsAutoRefresh orderArgsAutoRefresh;   // 注入配置 Bean
+
+    @RequestMapping("/config")
+    public String config() {
+        return orderArgsAutoRefresh.getTimeout() + "," + orderArgsAutoRefresh.getAutoConfirm();
+    }
+}
+```
+
+#### 流程图
+
+```
+Nacos 配置变更
+    │
+    └─→ Spring Cloud 发布 RefreshEvent
+            │
+            └─→ 自动重新绑定 @ConfigurationProperties Bean 的属性值
+                    │
+                    └─→ Bean 本身不销毁，只是字段值更新
+```
+
+#### 优缺点
+
+| 优点 | 缺点 |
+|------|------|
+| Bean 不会销毁重建，无短暂不可用风险 | 不支持 SpEL 表达式 |
+| 配置集中管理，类型安全 | 需要额外创建配置类 |
+| Spring Cloud Alibaba 默认自动刷新 | 字段类型需与配置值兼容 |
+| 适合大量配置项，结构清晰 | |
+
+### 7.5 两种方式对比
+
+| 对比项 | `@RefreshScope` + `@Value` | `@ConfigurationProperties` |
+|--------|---------------------------|---------------------------|
+| 刷新机制 | 销毁重建整个 Bean | 仅重新绑定属性值 |
+| Bean 可用性 | 重建期间短暂不可用 | 始终可用 |
+| 配置管理 | 分散在各个类中 | 集中在配置类中 |
+| 类型安全 | 弱（String 类型） | 强（支持类型转换） |
+| SpEL 表达式 | 支持 | 不支持 |
+| 适用场景 | 少量配置、临时使用 | 大量配置、正式项目（推荐） |
+| 额外注解 | 需要 `@RefreshScope` | 无需额外注解（自动刷新） |
+
+### 7.6 验证动态刷新
+
+1. 启动 Nacos Server 和 service-order 服务
+2. 访问 `GET http://localhost:8000/order/config`，查看当前配置值
+3. 在 Nacos 控制台修改 `service-order.yaml` 中的 `order.timeout` 值（如改为 `5000`）
+4. 再次访问 `GET http://localhost:8000/order/config`，确认值已更新，**无需重启服务**

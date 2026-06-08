@@ -4,5 +4,11 @@ spring:
   cloud:
     nacos:
       server-addr: 127.0.0.1:8848
+
+#      # 配置文件导入检查关闭
+#      config:
+#        import-check:
+#          enabled: false
+
 server:
   port: 9000
