@@ -1,14 +1,22 @@
+server:
+  port: 9000
+
 spring:
+  profiles:
+    active: dev
   application:
     name: service-product
   cloud:
     nacos:
       server-addr: 127.0.0.1:8848
-
-#      # 配置文件导入检查关闭
-#      config:
-#        import-check:
-#          enabled: false
-
-server:
-  port: 9000
+      config:
+        namespace: ${spring.profiles.active:}
+        group: product
+---
+spring:
+  config:
+    activate:
+      on-profile: dev
+    import:
+      - nacos:database.yaml?group=product
+      - nacos:common.yaml?group=product

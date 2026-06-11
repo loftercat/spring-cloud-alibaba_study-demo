@@ -1,5 +1,6 @@
 package com.su.order.service;
 
+import com.su.order.Feign.ProductFeignClient;
 import com.su.order.bean.Order;
 import com.su.order.service.impl.OrderService;
 import com.su.product.bean.Product;
@@ -25,9 +26,12 @@ public class OrderServiceImpl implements OrderService {
 
     private final LoadBalancerClient loadBalancerClient;
 
+    private final ProductFeignClient productFeignClient;
+
     @Override
     public Order createOrder(Long productId, Long userId) {
-        Product product = getProductFromRemoteWithBalanceAnnotation(productId);
+        //Product product = getProductFromRemoteWithBalanceAnnotation(productId);
+        Product product = productFeignClient.getProductById(productId);
         Order order = new Order();
         order.setId(1L);
         order.setTotalPrice(product.getPrice().multiply(new BigDecimal(product.getNum())));
