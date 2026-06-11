@@ -1,5 +1,6 @@
-package com.su.order.Feign;
+package com.su.order.feign;
 
+import com.su.order.config.OpenFeignLogConfig;
 import com.su.product.bean.Product;
 import org.springframework.cloud.openfeign.FeignClient;
 import org.springframework.web.bind.annotation.GetMapping;

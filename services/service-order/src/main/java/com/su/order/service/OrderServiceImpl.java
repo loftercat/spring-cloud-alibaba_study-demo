@@ -1,6 +1,6 @@
 package com.su.order.service;
 
-import com.su.order.Feign.ProductFeignClient;
+import com.su.order.feign.ProductFeignClient;
 import com.su.order.bean.Order;
 import com.su.order.service.impl.OrderService;
 import com.su.product.bean.Product;
