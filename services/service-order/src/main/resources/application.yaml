@@ -4,6 +4,7 @@ server:
 spring:
   profiles:
     active: dev
+    include: feign
   application:
     name: service-order
   cloud:

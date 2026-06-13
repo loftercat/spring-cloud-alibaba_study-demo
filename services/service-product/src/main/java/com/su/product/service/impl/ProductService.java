@@ -9,5 +9,5 @@ public interface ProductService {
      * @param productId 商品id
      * @return 商品信息
      */
-    Product getProductById(Long productId);
+    Product getProductById(Long productId) throws InterruptedException;
 }
