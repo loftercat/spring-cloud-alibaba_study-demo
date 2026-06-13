@@ -9,6 +9,10 @@ spring:
             loggerLevel: FULL
             retryer: feign.Retryer.Default
 
+# 开启sentinel
+feign:
+  sentinel:
+    enabled: true
 #          service-product:
 #            connectTimeout: 3000
 #            read-timeout: 5000

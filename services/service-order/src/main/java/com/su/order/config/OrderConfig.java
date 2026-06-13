@@ -21,7 +21,7 @@ public class OrderConfig {
     }
     
     // 配置feign的重试策略，默认5次
-    @Bean
+//    @Bean
     public Retryer retryer() {
         return new Retryer.Default();
     }
