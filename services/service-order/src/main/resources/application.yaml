@@ -14,7 +14,7 @@ spring:
         namespace: ${spring.profiles.active:}
 logging:
   level:
-    com.su.order.feign: debug
+    com.su.order.config: debug
 
 ---
 spring:

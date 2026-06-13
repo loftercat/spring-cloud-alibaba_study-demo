@@ -7,6 +7,8 @@ spring:
             connectTimeout: 1000
             read-timeout: 1000
             loggerLevel: FULL
+            retryer: feign.Retryer.Default
+
 #          service-product:
 #            connectTimeout: 3000
 #            read-timeout: 5000
