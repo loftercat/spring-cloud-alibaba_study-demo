@@ -49,13 +49,14 @@ public class OrderController {
     }
 
     @GetMapping("/writeDb")
-    public String writeBd() {
-        return "writeBd";
+    public String writeDb() {
+        return "writeDb";
     }
 
     @GetMapping("/readDb")
-    public String readBd() {
-        return "readBd";
+    public String readDb() {
+        log.info("readDb success...");
+        return "readDb";
     }
 
 }

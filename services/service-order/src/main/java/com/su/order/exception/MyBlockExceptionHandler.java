@@ -22,6 +22,8 @@ public class MyBlockExceptionHandler implements BlockExceptionHandler {
                        String resourceName, BlockException e) throws Exception {
 
         response.setContentType("application/json;charset=utf-8");
+        response.setStatus(429);
+
         PrintWriter writer = response.getWriter();
         R<Object> error = R.error(500, resourceName + "被Sentinel限流，原因：" + e.getClass());
         String jsonError = objectMapper.writeValueAsString(error);
