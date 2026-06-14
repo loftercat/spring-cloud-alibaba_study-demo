@@ -6,6 +6,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cloud.context.config.annotation.RefreshScope;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -14,7 +15,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RefreshScope
 @RequiredArgsConstructor
 @RestController
-@RequestMapping("/order")
+@RequestMapping
 public class OrderController {
 
     private final OrderService orderService;
@@ -47,5 +48,14 @@ public class OrderController {
         return "timeout: " + timeout + ", autoConfirm: " + autoConfirm + ", url: " + url;
     }
 
+    @GetMapping("/writeDb")
+    public String writeBd() {
+        return "writeBd";
+    }
+
+    @GetMapping("/readDb")
+    public String readBd() {
+        return "readBd";
+    }
 
 }
