@@ -12,6 +12,8 @@ spring:
       transport:
         dashboard: 127.0.0.1:8080
       eager: true
+      # 关闭web上下文统一
+      web-context-unify: false
 # 开启sentinel
 feign:
   sentinel:

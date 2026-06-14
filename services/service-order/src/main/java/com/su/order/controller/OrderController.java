@@ -28,9 +28,18 @@ public class OrderController {
     @Value("${order.jdbc.url}")
     private String url;
 
+    //普通创建
     @RequestMapping("/create")
     public Order createOrder(@RequestParam Long productId, @RequestParam Long userId) {
         return orderService.createOrder(productId, userId);
+    }
+
+    //秒杀创建
+    @RequestMapping("/seckill")
+    public Order seckill(@RequestParam Long productId, @RequestParam Long userId) {
+        Order order = orderService.createOrder(productId, userId);
+        order.setId(Long.MAX_VALUE);
+        return order;
     }
 
     @RequestMapping("/config")
