@@ -12,6 +12,10 @@ spring:
       config:
         namespace: ${spring.profiles.active:}
         group: product
+    sentinel:
+      transport:
+        dashboard: 127.0.0.1:8080
+      eager: true
 ---
 spring:
   config:

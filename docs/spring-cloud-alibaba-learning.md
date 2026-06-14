@@ -1028,3 +1028,141 @@ Nacos 配置变更
 2. 访问 `GET http://localhost:8000/order/config`，查看当前配置值
 3. 在 Nacos 控制台修改 `service-order.yaml` 中的 `order.timeout` 值（如改为 `5000`）
 4. 再次访问 `GET http://localhost:8000/order/config`，确认值已更新，**无需重启服务**
+
+---
+
+## 学习流程八：OpenFeign 声明式远程调用
+
+### 8.1 引入与启用
+
+services 层已统一引入 `spring-cloud-starter-openfeign`，启动类加 `@EnableFeignClients`：
+
+```java
+@EnableFeignClients
+@SpringBootApplication
+public class OrderMainApplication { ... }
+```
+
+### 8.2 定义与使用 Feign 客户端
+
+```java
+@FeignClient(value = "service-product")
+public interface ProductFeignClient {
+    @GetMapping("/product/{productId}")
+    Product getProductById(@PathVariable("productId") Long productId);
+}
+```
+
+```java
+@Service
+public class OrderServiceImpl implements OrderService {
+    private final ProductFeignClient productFeignClient;
+
+    @Override
+    public Order createOrder(Long productId, Long userId) {
+        Product product = productFeignClient.getProductById(productId);
+        // ...
+    }
+}
+```
+
+> 接口方法签名与目标服务 Controller 保持一致，像调用本地方法一样发起 HTTP 请求。
+
+### 8.3 日志配置
+
+| 级别 | 说明 |
+|------|------|
+| NONE | 不记录（默认） |
+| BASIC | 请求方法、URL、响应状态码、执行时间 |
+| HEADERS | BASIC + 请求/响应头 |
+| FULL | HEADERS + 请求/响应体 |
+
+```java
+@Bean
+public Logger.Level feignLoggerLevel() {
+    return Logger.Level.FULL;
+}
+```
+
+> 需配合 `logging.level.com.su.order.feign: debug` 才能输出日志。
+
+### 8.4 超时配置
+
+```yaml
+spring:
+  cloud:
+    openfeign:
+      client:
+        config:
+          default:
+            connectTimeout: 1000
+            readTimeout: 1000
+```
+
+### 8.5 重试策略
+
+```java
+@Bean
+public Retryer retryer() {
+    // period, maxPeriod, maxAttempts
+    return new Retryer.Default(1000, 1000, 3);
+}
+```
+
+> YAML 中 `retryer` 不支持字符串类名配置，必须通过 Java Config。
+
+### 8.6 请求拦截器
+
+为每个 Feign 请求统一添加请求头（如 traceId）：
+
+```java
+@Bean
+public RequestInterceptor requestInterceptor() {
+    return requestTemplate -> 
+        requestTemplate.header("X-Request-Id", UUID.randomUUID().toString());
+}
+```
+
+### 8.7 兜底策略（Fallback）
+
+**实现 Fallback 类**：
+
+```java
+@Slf4j
+@Component
+public class ProductServiceImplFallback implements ProductFeignClient {
+    @Override
+    public Product getProductById(Long productId) {
+        log.info("getProductById 兜底触发");
+        Product product = new Product();
+        product.setId(productId);
+        product.setPrice(BigDecimal.valueOf(500));
+        product.setProductName("兜底" + productId);
+        return product;
+    }
+}
+```
+
+**绑定到 FeignClient**：
+
+```java
+@FeignClient(value = "service-product", fallback = ProductServiceImplFallback.class)
+public interface ProductFeignClient { ... }
+```
+
+> 需开启 Sentinel：`feign.sentinel.enabled: true`。
+
+**触发场景**：目标服务异常/超时、服务不可用、熔断器打开。
+
+---
+
+## 附录：OpenFeign vs RestTemplate
+
+| 对比项 | OpenFeign | RestTemplate |
+|--------|-----------|--------------|
+| 代码风格 | 声明式（接口+注解） | 编程式 |
+| 可读性 | 高 | 低 |
+| 与 MVC 注解兼容 | 完全兼容 | 不兼容 |
+| Spring 官方推荐 | ✅ 推荐 | ⚠️ 维护模式 |
+| 日志/拦截器/重试 | 内置支持 | 需手动配置 |
+| 兜底策略 | 支持 | 需自行实现 |

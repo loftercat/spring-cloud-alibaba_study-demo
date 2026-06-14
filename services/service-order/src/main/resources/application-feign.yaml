@@ -8,7 +8,10 @@ spring:
             read-timeout: 1000
             loggerLevel: FULL
             retryer: feign.Retryer.Default
-
+    sentinel:
+      transport:
+        dashboard: 127.0.0.1:8080
+      eager: true
 # 开启sentinel
 feign:
   sentinel:
