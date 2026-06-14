@@ -1,6 +1,7 @@
 package com.su.order.service;
 
 import com.alibaba.csp.sentinel.annotation.SentinelResource;
+import com.alibaba.csp.sentinel.slots.block.BlockException;
 import com.su.order.feign.ProductFeignClient;
 import com.su.order.bean.Order;
 import com.su.order.service.impl.OrderService;
@@ -29,7 +30,8 @@ public class OrderServiceImpl implements OrderService {
 
     private final ProductFeignClient productFeignClient;
 
-    @SentinelResource(value = "createOrder")
+    //如果对createOrder进行控流，出现控制后，先找handler，再找fallback，如果都没有则抛出异常，可以在全局异常处理器中捕获处理
+    @SentinelResource(value = "createOrder", blockHandler = "createOrderHandler")
     @Override
     public Order createOrder(Long productId, Long userId) {
         //Product product = getProductFromRemoteWithBalanceAnnotation(productId);
@@ -41,6 +43,18 @@ public class OrderServiceImpl implements OrderService {
         order.setNickname("az");
         order.setAddress("公寓");
         order.setProductList(List.of(product));
+        return order;
+    }
+
+    //如果@SentinelResource(value = "createOrder")没有被控流，则正常返回数据，否则返回次方法兜底数据
+    public Order createOrderHandler(Long productId, Long userId, BlockException e) {
+        Order order = new Order();
+        order.setId(1L);
+        order.setTotalPrice(BigDecimal.valueOf(0));
+        order.setUserId(userId);
+        order.setNickname("handler兜底");
+        order.setAddress("异常信息：" + e.getMessage());
+        order.setProductList(List.of());
         return order;
     }
 

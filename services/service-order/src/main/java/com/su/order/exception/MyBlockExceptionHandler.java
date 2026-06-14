@@ -6,14 +6,16 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.su.common.R;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
 import java.io.PrintWriter;
 
+@RequiredArgsConstructor
 @Component
 public class MyBlockExceptionHandler implements BlockExceptionHandler {
 
-    private ObjectMapper objectMapper = new ObjectMapper();
+    private final ObjectMapper objectMapper;
 
     @Override
     public void handle(HttpServletRequest request, HttpServletResponse response,
