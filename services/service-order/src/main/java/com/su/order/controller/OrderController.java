@@ -15,7 +15,7 @@ import org.springframework.web.bind.annotation.RestController;
 @RefreshScope
 @RequiredArgsConstructor
 @RestController
-@RequestMapping
+@RequestMapping("/order")
 public class OrderController {
 
     private final OrderService orderService;

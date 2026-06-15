@@ -1156,6 +1156,122 @@ public interface ProductFeignClient { ... }
 
 ---
 
+## 学习流程九：Sentinel 流量控制与熔断降级
+
+### 9.1 引入依赖
+
+```xml
+<dependency>
+    <groupId>com.alibaba.cloud</groupId>
+    <artifactId>spring-cloud-starter-alibaba-sentinel</artifactId>
+</dependency>
+```
+
+### 9.2 配置控制台地址
+
+```yaml
+spring:
+  cloud:
+    sentinel:
+      transport:
+        dashboard: 127.0.0.1:8080
+      eager: true   # 启动即注册，避免首次调用才初始化
+```
+
+> 下载并启动 Sentinel Dashboard：`java -jar sentinel-dashboard-1.8.x.jar`
+
+### 9.3 注解方式限流（`@SentinelResource`）
+
+```java
+@SentinelResource(value = "createOrder", blockHandler = "createOrderHandler")
+public Order createOrder(Long productId, Long userId) {
+    Product product = productFeignClient.getProductById(productId);
+    // ...
+}
+
+// 限流/降级时执行的兜底方法
+public Order createOrderHandler(Long productId, Long userId, BlockException e) {
+    Order order = new Order();
+    order.setNickname("handler兜底");
+    order.setAddress("异常：" + e.getMessage());
+    return order;
+}
+```
+
+**规则匹配优先级**：触发限流后，先找 `blockHandler`，再找 `fallback`，都没有则抛异常。
+
+### 9.4 全局异常处理（`BlockExceptionHandler`）
+
+如果不想每个方法都写 `blockHandler`，可以实现全局处理器：
+
+```java
+@Component
+public class MyBlockExceptionHandler implements BlockExceptionHandler {
+
+    private final ObjectMapper objectMapper;
+
+    public MyBlockExceptionHandler(ObjectMapper objectMapper) {
+        this.objectMapper = objectMapper;
+    }
+
+    @Override
+    public void handle(HttpServletRequest request, HttpServletResponse response,
+                       String resourceName, BlockException e) throws Exception {
+        response.setContentType("application/json;charset=utf-8");
+        R<Object> error = R.error(500, resourceName + "被限流：" + e.getClass().getSimpleName());
+        response.getWriter().write(objectMapper.writeValueAsString(error));
+    }
+}
+```
+
+### 9.5 Feign 整合 Sentinel（Fallback）
+
+开启配置：
+
+```yaml
+feign:
+  sentinel:
+    enabled: true
+```
+
+编写 Fallback 实现：
+
+```java
+@Slf4j
+@Component
+public class ProductServiceImplFallback implements ProductFeignClient {
+    @Override
+    public Product getProductById(Long productId) {
+        log.info("getProductById 兜底触发");
+        Product product = new Product();
+        product.setId(productId);
+        product.setPrice(BigDecimal.valueOf(500));
+        product.setProductName("兜底" + productId);
+        return product;
+    }
+}
+```
+
+绑定到 FeignClient：
+
+```java
+@FeignClient(value = "service-product", fallback = ProductServiceImplFallback.class)
+public interface ProductFeignClient { ... }
+```
+
+**触发场景**：目标服务异常/超时、服务不可用、熔断器打开。
+
+### 9.6 核心概念速查
+
+| 概念 | 说明 |
+|------|------|
+| **限流（Flow Control）** | 控制 QPS/并发线程数，防止系统被流量打垮 |
+| **降级（Degrade）** | 服务异常比例/慢调用达到阈值时，自动熔断降级 |
+| **热点参数限流** | 针对频繁访问的参数值（如某个商品ID）单独限流 |
+| **系统保护** | 根据 CPU、负载、RT 等系统指标自动限流 |
+
+---
+
 ## 附录：OpenFeign vs RestTemplate
 
 | 对比项 | OpenFeign | RestTemplate |
