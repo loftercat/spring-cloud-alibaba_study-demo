@@ -1272,6 +1272,355 @@ public interface ProductFeignClient { ... }
 
 ---
 
+## 学习流程十：Spring Cloud Gateway 网关
+
+### 10.1 为什么需要网关
+
+在微服务架构中，客户端直接调用各个服务会存在以下问题：
+- 客户端需要维护多个服务的地址
+- 跨域、认证、限流等通用逻辑需要在每个服务中重复实现
+- 服务暴露过多，安全性差
+
+**网关（Gateway）** 作为统一入口，负责请求路由、负载均衡、权限校验、限流熔断等。
+
+### 10.2 创建 gateway 模块
+
+在根 `pom.xml` 中添加模块：
+
+```xml
+<modules>
+    <module>services</module>
+    <module>model</module>
+    <module>gateway</module>   <!-- 新增 -->
+</modules>
+```
+
+**gateway/pom.xml**：
+
+```xml
+<parent>
+    <groupId>com.su</groupId>
+    <artifactId>cloud-demo</artifactId>
+    <version>0.0.1-SNAPSHOT</version>
+</parent>
+
+<artifactId>gateway</artifactId>
+
+<dependencies>
+    <!-- Nacos 服务发现 -->
+    <dependency>
+        <groupId>com.alibaba.cloud</groupId>
+        <artifactId>spring-cloud-starter-alibaba-nacos-discovery</artifactId>
+    </dependency>
+    <!-- Gateway 核心依赖（基于 WebFlux） -->
+    <dependency>
+        <groupId>org.springframework.cloud</groupId>
+        <artifactId>spring-cloud-starter-gateway</artifactId>
+    </dependency>
+    <!-- 负载均衡 -->
+    <dependency>
+        <groupId>org.springframework.cloud</groupId>
+        <artifactId>spring-cloud-starter-loadbalancer</artifactId>
+    </dependency>
+</dependencies>
+```
+
+> **⚠️ 重要**：Gateway 基于 **Spring WebFlux**（异步非阻塞），**不能**引入 `spring-boot-starter-webmvc`（Servlet 阻塞模型），否则会导致依赖冲突。
+
+### 10.3 配置文件
+
+**application.yaml**：
+
+```yaml
+server:
+  port: 8080
+
+spring:
+  application:
+    name: gateway
+  cloud:
+    nacos:
+      server-addr: 127.0.0.1:8848
+    gateway:
+      discovery:
+        locator:
+          enabled: true   # 自动根据服务名创建路由
+      routes:
+        - id: service-order-route
+          uri: lb://service-order     # lb:// 表示使用负载均衡
+          predicates:
+            - Path=/order/**
+        - id: service-product-route
+          uri: lb://service-product
+          predicates:
+            - Path=/product/**
+```
+
+> **路由配置说明**：
+> - `id`：路由唯一标识
+> - `uri`：目标服务地址，`lb://` 前缀表示从注册中心获取服务列表并负载均衡
+> - `predicates`：断言条件，匹配请求路径
+
+### 10.4 启动类
+
+```java
+package com.su.gateway;
+
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+
+@SpringBootApplication
+public class GatewayApplication {
+    public static void main(String[] args) {
+        SpringApplication.run(GatewayApplication.class, args);
+    }
+}
+```
+
+### 10.5 测试验证
+
+启动 Gateway 后，所有请求统一通过 `http://localhost:8080` 访问：
+
+```
+# 原来直接访问 order 服务
+GET http://localhost:8000/order/create?productId=1&userId=1
+
+# 现在通过网关访问
+GET http://localhost:8080/order/create?productId=1&userId=1
+
+# 原来直接访问 product 服务
+GET http://localhost:9000/product/1
+
+# 现在通过网关访问
+GET http://localhost:8080/product/1
+```
+
+### 10.6 核心概念
+
+| 概念 | 说明 |
+|------|------|
+| **Route（路由）** | 网关的基本构建块，包含 ID、目标 URI、断言集合、过滤器集合 |
+| **Predicate（断言）** | 匹配条件，如 `Path=/order/**`、`Method=GET` |
+| **Filter（过滤器）** | 对请求或响应进行处理，如添加请求头、重写路径、限流 |
+
+### 10.7 常见断言类型
+
+| 断言 | 示例 | 说明 |
+|------|------|------|
+| `Path` | `Path=/order/**` | 路径匹配 |
+| `Method` | `Method=GET,POST` | HTTP 方法匹配 |
+| `Header` | `Header=X-Request-Id, \d+` | 请求头匹配 |
+| `Query` | `Query=foo, ba.` | 查询参数匹配 |
+| `After/Before/Between` | `After=2024-01-01T00:00:00+08:00[Asia/Shanghai]` | 时间匹配 |
+
+### 10.8 常见过滤器
+
+| 过滤器 | 示例 | 说明 |
+|--------|------|------|
+| `StripPrefix` | `StripPrefix=1` | 去掉路径前 N 段 |
+| `AddRequestHeader` | `AddRequestHeader=X-Request-From,Gateway` | 添加请求头 |
+| `RewritePath` | `RewritePath=/api/(?<segment>.*), /$\{segment}` | 重写路径 |
+| `RequestRateLimiter` | - | 限流（基于 Redis） |
+
+**示例：去掉路径前缀**
+
+```yaml
+spring:
+  cloud:
+    gateway:
+      routes:
+        - id: service-order-route
+          uri: lb://service-order
+          predicates:
+            - Path=/api/order/**
+          filters:
+            - StripPrefix=1   # /api/order/create → /order/create
+```
+
+---
+
+## 学习流程十一：Gateway 高级配置与自定义过滤器
+
+### 11.1 全局 CORS 配置
+
+Gateway 作为统一入口，适合集中处理跨域问题：
+
+```yaml
+spring:
+  cloud:
+    gateway:
+      globalcors:
+        cors-configurations:
+          '[/**]':                    # 对所有路径生效
+            allowed-origin-patterns: "*"   # 允许所有来源
+            allowed-methods: "*"           # 允许所有 HTTP 方法
+            allowed-headers: "*"           # 允许所有请求头
+```
+
+> **注意**：`allowed-origin-patterns: "*"` 是 Spring Boot 2.4+ 的写法，替代了旧的 `allowed-origins`。
+
+### 11.2 全局默认过滤器（default-filters）
+
+`default-filters` 对所有路由生效，避免重复配置：
+
+```yaml
+spring:
+  cloud:
+    gateway:
+      default-filters:
+        - AddResponseHeader=X-Request-Id, 123456   # 所有响应都添加该头
+      routes:
+        - id: order-route
+          uri: lb://service-order
+          predicates:
+            - Path=/api/order/**
+```
+
+### 11.3 路径重写过滤器（RewritePath）
+
+`RewritePath` 使用正则表达式重写请求路径，比 `StripPrefix` 更灵活：
+
+```yaml
+filters:
+  - RewritePath=/api/(?<segment>.*), /$\{segment}
+```
+
+**处理过程**：
+
+| 原始请求路径 | 正则匹配 | 捕获组 `segment` | 重写后路径 |
+|-------------|---------|-----------------|-----------|
+| `/api/order/123` | `/api/(?<segment>.*)` | `order/123` | `/order/123` |
+| `/api/product/list` | `/api/(?<segment>.*)` | `product/list` | `/product/list` |
+
+> **转义注意**：YAML 中 `${}` 会被 Spring 解析为占位符，所以写成 `$\{segment}` 来转义。
+
+### 11.4 自定义 GatewayFilterFactory（局部过滤器）
+
+实现自定义过滤器工厂，在响应中添加一次性令牌：
+
+**OnceTokenGatewayFilterFactory.java**
+
+```java
+@Component
+public class OnceTokenGatewayFilterFactory extends AbstractNameValueGatewayFilterFactory {
+    @Override
+    public GatewayFilter apply(NameValueConfig config) {
+        return new GatewayFilter() {
+            @Override
+            public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
+                // 使用 .then() 确保在响应成功后执行
+                return chain.filter(exchange).then(Mono.fromRunnable(() -> {
+                    ServerHttpResponse response = exchange.getResponse();
+                    HttpHeaders headers = response.getHeaders();
+                    String value = config.getValue();
+
+                    if ("uuid".equalsIgnoreCase(value)) {
+                        value = UUID.randomUUID().toString();
+                    }
+                    if ("jwt".equalsIgnoreCase(value)) {
+                        value = "Bearer " + value;
+                    }
+                    headers.add(config.getName(), value);
+                }));
+            }
+        };
+    }
+}
+```
+
+**命名规范**：类名必须以 `GatewayFilterFactory` 结尾，配置时只用写前缀部分。
+
+**配置使用**：
+
+```yaml
+filters:
+  - OnceToken=X-Request-Token, uuid      # 生成 UUID
+  - OnceToken=Authorization, jwt         # 添加 Bearer 前缀
+```
+
+### 11.5 自定义 GlobalFilter（全局过滤器）
+
+实现 `GlobalFilter` 接口，对所有请求生效：
+
+**RtGlobalFilter.java**（请求耗时统计）
+
+```java
+@Component
+@Slf4j
+public class RtGlobalFilter implements GlobalFilter, Ordered {
+    @Override
+    public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
+        long startTime = System.currentTimeMillis();
+        log.info("请求[{}]开始", exchange.getRequest().getURI());
+
+        Mono<Void> filter = chain.filter(exchange);
+        // doFinally 确保无论成功/失败/取消都会执行
+        filter.doFinally((result) -> {
+            long endTime = System.currentTimeMillis();
+            log.info("请求[{}]结束，耗时：{}ms", exchange.getRequest().getURI(), endTime - startTime);
+        });
+        return filter;
+    }
+
+    @Override
+    public int getOrder() {
+        return 0;   // 数字越小优先级越高
+    }
+}
+```
+
+**关键点**：
+- Gateway 基于 WebFlux（异步非阻塞），不能用同步方式统计耗时
+- `doFinally` 在 Mono 完成时触发（成功/失败/取消都会执行）
+- `.then()` 只在成功时执行，适合响应后添加头信息等操作
+
+### 11.6 完整路由配置示例
+
+```yaml
+spring:
+  cloud:
+    gateway:
+      # 全局跨域配置
+      globalcors:
+        cors-configurations:
+          '[/**]':
+            allowed-origin-patterns: "*"
+            allowed-methods: "*"
+            allowed-headers: "*"
+
+      # 全局默认过滤器
+      default-filters:
+        - AddResponseHeader=X-Request-Id, 123456
+
+      routes:
+        - id: order-route
+          uri: lb://service-order
+          predicates:
+            - Path=/api/order/**
+          filters:
+            - RewritePath=/api/(?<segment>.*), /$\{segment}
+            - OnceToken=X-Request-Token, uuid
+
+        - id: product-route
+          uri: lb://service-product
+          predicates:
+            - Path=/api/product/**
+          filters:
+            - RewritePath=/api/(?<segment>.*), /$\{segment}
+```
+
+### 11.7 过滤器执行顺序
+
+| 过滤器类型 | 执行范围 | 配置方式 | 典型场景 |
+|-----------|---------|---------|---------|
+| `GlobalFilter` | 所有路由 | Java 代码实现 | 日志、鉴权、耗时统计 |
+| `GatewayFilterFactory` | 指定路由 | YAML 配置 + Java 实现 | 响应头处理、参数转换 |
+| `default-filters` | 所有路由 | YAML 配置 | 通用响应头、全局处理 |
+
+**执行顺序**：`GlobalFilter`（按 Order） → `default-filters` → 路由级 `filters`
+
+---
+
 ## 附录：OpenFeign vs RestTemplate
 
 | 对比项 | OpenFeign | RestTemplate |
