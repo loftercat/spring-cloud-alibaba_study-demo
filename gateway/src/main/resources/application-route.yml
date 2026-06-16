@@ -1,12 +1,20 @@
 spring:
   cloud:
     gateway:
+#      全局过滤器：添加响应头
+      default-filters:
+        - AddResponseHeader=X-Request-Id,=123456
       routes:
         - id: order-route
           uri: lb://service-order
           predicates:
             - Path=/api/order/**
+          filters:
+            - RewritePath=/api/(?<segment>.*), /$\{segment}
+            - AddResponseHeader=X-Request-Id,=123456
         - id: product-route
           uri: lb://service-product
           predicates:
             - Path=/api/product/**
+          filters:
+            - RewritePath=/api/(?<segment>.*), /$\{segment}
