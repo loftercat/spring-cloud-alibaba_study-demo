@@ -1,6 +1,17 @@
 spring:
   cloud:
     gateway:
+#     全局cors配置
+      globalcors:
+        cors-configurations:
+          '[/**]':
+#            请求来源
+            allowed-origin-patterns: "*"
+#            请求方法
+            allowed-methods: "*"
+#            请求头
+            allowed-headers: "*"
+
 #      全局过滤器：添加响应头
       default-filters:
         - AddResponseHeader=X-Request-Id,=123456
