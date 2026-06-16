@@ -11,7 +11,9 @@ spring:
             - Path=/api/order/**
           filters:
             - RewritePath=/api/(?<segment>.*), /$\{segment}
-            - AddResponseHeader=X-Request-Id,=123456
+#            - AddResponseHeader=X-Request-Id,=123456
+#            自定义过滤器：添加一次性的令牌，支持uuid，jwt等各种格式
+            - OnceToken=X-Request-Token,uuid
         - id: product-route
           uri: lb://service-product
           predicates:
