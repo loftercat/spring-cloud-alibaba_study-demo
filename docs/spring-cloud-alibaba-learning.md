@@ -1621,6 +1621,555 @@ spring:
 
 ---
 
+## 学习流程十二：Seata 分布式事务
+
+### 12.1 为什么需要分布式事务
+
+在微服务架构中，一个业务操作往往需要调用多个服务的接口。例如"下单购买"流程：
+1. 扣减库存（storage 服务）
+2. 创建订单（order 服务）
+3. 扣减账户余额（account 服务）
+
+如果第 3 步失败，前面两步已经提交的数据无法自动回滚，导致数据不一致。**Seata** 就是解决这种跨服务事务一致性问题的分布式事务框架。
+
+### 12.2 Seata 核心概念
+
+| 概念 | 说明 |
+|------|------|
+| **TC (Transaction Coordinator)** | 事务协调器，维护全局事务的运行状态，负责全局提交或回滚 |
+| **TM (Transaction Manager)** | 事务管理器，定义全局事务的范围，负责开启、提交、回滚全局事务 |
+| **RM (Resource Manager)** | 资源管理器，管理分支事务处理的资源，负责注册分支事务和报告状态 |
+| **XID** | 全局事务的唯一标识，由 TM 生成并在调用链中传递 |
+
+### 12.3 项目结构
+
+```
+services
+├── seata-business    # TM 事务管理器，@GlobalTransactional 入口
+├── seata-order       # RM 资源管理器，管理订单数据库分支事务
+├── seata-account     # RM 资源管理器，管理账户数据库分支事务
+└── seata-storage     # RM 资源管理器，管理库存数据库分支事务
+```
+
+**调用链**：
+```
+Client → seata-business:purchase()
+            ├── Feign → seata-storage:deduct()     @Transactional
+            └── Feign → seata-order:create()
+                            └── Feign → seata-account:debit()   @Transactional
+```
+
+### 12.4 数据库准备
+
+每个 RM 服务需要独立的数据库：
+
+| 服务 | 数据库 | 表 |
+|------|--------|-----|
+| seata-storage | `storage_db` | `storage_tbl`（商品库存） |
+| seata-order | `order_db` | `order_tbl`（订单记录） |
+| seata-account | `account_db` | `account_tbl`（账户余额） |
+
+> Seata AT 模式需要在每个业务数据库中创建 `undo_log` 表，用于记录回滚日志。
+
+### 12.5 引入依赖
+
+四个 Seata 模块都需要引入 Seata Starter：
+
+```xml
+<dependency>
+    <groupId>com.alibaba.cloud</groupId>
+    <artifactId>spring-cloud-starter-alibaba-seata</artifactId>
+</dependency>
+```
+
+RM 服务（order/account/storage）还需要数据库相关依赖：
+
+```xml
+<!-- MyBatis -->
+<dependency>
+    <groupId>org.mybatis.spring.boot</groupId>
+    <artifactId>mybatis-spring-boot-starter</artifactId>
+    <version>3.0.4</version>
+</dependency>
+<!-- MySQL 驱动 -->
+<dependency>
+    <groupId>com.mysql</groupId>
+    <artifactId>mysql-connector-j</artifactId>
+    <scope>runtime</scope>
+</dependency>
+```
+
+### 12.6 配置文件
+
+**seata-business → application.yml**
+
+```yaml
+spring:
+  application:
+    name: seata-business
+  cloud:
+    nacos:
+      server-addr: 127.0.0.1:8848
+      config:
+        import-check:
+          enabled: false
+server:
+  port: 21000
+```
+
+> business 服务作为 TM，不直接操作数据库，因此不需要配置数据源。
+
+**seata-order → application.yml**
+
+```yaml
+spring:
+  application:
+    name: seata-order
+  datasource:
+    url: jdbc:mysql://localhost:3306/order_db?useUnicode=true&characterEncoding=utf-8&useSSL=false
+    username: root
+    password: 123456
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  cloud:
+    nacos:
+      server-addr: 127.0.0.1:8848
+      config:
+        import-check:
+          enabled: false
+server:
+  port: 22000
+mybatis:
+  mapper-locations: classpath:mapper/*.xml
+```
+
+> seata-account（:20000）和 seata-storage（:23000）配置类似，只需修改数据库和端口。
+
+### 12.7 启动类配置
+
+**seata-business 启动类**
+
+```java
+@EnableDiscoveryClient
+@SpringBootApplication
+@EnableFeignClients(basePackages = "com.su.business.feign")
+public class SeataBusinessMainApplication {
+    public static void main(String[] args) {
+        SpringApplication.run(SeataBusinessMainApplication.class, args);
+    }
+}
+```
+
+**seata-order 启动类**
+
+```java
+@EnableDiscoveryClient
+@SpringBootApplication
+@EnableTransactionManagement
+@MapperScan("com.su.order.mapper")
+@EnableFeignClients(basePackages = "com.su.order.feign")
+public class SeataOrderMainApplication {
+    public static void main(String[] args) {
+        SpringApplication.run(SeataOrderMainApplication.class, args);
+    }
+}
+```
+
+> `@EnableTransactionManagement` 开启 Spring 本地事务，`@MapperScan` 扫描 MyBatis Mapper 接口。
+
+### 12.8 Feign 客户端定义
+
+**seata-business → StorageFeignClient.java**
+
+```java
+@FeignClient(value = "seata-storage")
+public interface StorageFeignClient {
+    @GetMapping("/deduct")
+    String deduct(@RequestParam("commodityCode") String commodityCode,
+                  @RequestParam("count") Integer count);
+}
+```
+
+**seata-business → OrderFeignClient.java**
+
+```java
+@FeignClient(value = "seata-order")
+public interface OrderFeignClient {
+    @GetMapping("/create")
+    String create(@RequestParam("userId") String userId,
+                  @RequestParam("commodityCode") String commodityCode,
+                  @RequestParam("count") int orderCount);
+}
+```
+
+**seata-order → AccountFeignClient.java**
+
+```java
+@FeignClient(value = "seata-account")
+public interface AccountFeignClient {
+    @GetMapping("/debit")
+    String debit(@RequestParam("userId") String userId,
+                 @RequestParam("money") int money);
+}
+```
+
+### 12.9 业务代码实现
+
+#### 12.9.1 TM 入口 —— BusinessServiceImpl
+
+```java
+@Service
+public class BusinessServiceImpl implements BusinessService {
+
+    @Autowired
+    private StorageFeignClient storageFeignClient;
+
+    @Autowired
+    private OrderFeignClient orderFeignClient;
+
+    @GlobalTransactional
+    @Override
+    public void purchase(String userId, String commodityCode, int orderCount) {
+        // 1. 扣减库存
+        storageFeignClient.deduct(commodityCode, orderCount);
+        // 2. 创建订单（内部会扣减账户余额）
+        orderFeignClient.create(userId, commodityCode, orderCount);
+    }
+}
+```
+
+> `@GlobalTransactional` 是 Seata 提供的注解，标记该方法为全局事务入口。方法执行成功则全局提交，抛出异常则全局回滚。
+
+#### 12.9.2 RM 分支事务 —— StorageServiceImpl
+
+```java
+@Service
+public class StorageServiceImpl implements StorageService {
+
+    @Autowired
+    StorageTblMapper storageTblMapper;
+
+    @Override
+    @Transactional
+    public void deduct(String commodityCode, int count) {
+        storageTblMapper.deduct(commodityCode, count);
+        if (count == 5) {
+            throw new RuntimeException("库存不足");
+        }
+    }
+}
+```
+
+#### 12.9.3 RM 分支事务 —— OrderServiceImpl
+
+```java
+@Service
+public class OrderServiceImpl implements OrderService {
+
+    @Autowired
+    OrderTblMapper orderTblMapper;
+
+    @Autowired
+    AccountFeignClient accountFeignClient;
+
+    @Override
+    @Transactional
+    public OrderTbl create(String userId, String commodityCode, int orderCount) {
+        // 1. 计算订单价格
+        int orderMoney = calculate(commodityCode, orderCount);
+        // 2. 扣减账户余额
+        accountFeignClient.debit(userId, orderMoney);
+        // 3. 保存订单
+        OrderTbl orderTbl = new OrderTbl();
+        orderTbl.setUserId(userId);
+        orderTbl.setCommodityCode(commodityCode);
+        orderTbl.setCount(orderCount);
+        orderTbl.setMoney(orderMoney);
+        orderTblMapper.insert(orderTbl);
+
+        // 模拟异常，触发全局回滚
+        int i = 10 / 0;
+
+        return orderTbl;
+    }
+
+    private int calculate(String commodityCode, int orderCount) {
+        return 9 * orderCount;
+    }
+}
+```
+
+#### 12.9.4 RM 分支事务 —— AccountServiceImpl
+
+```java
+@Service
+public class AccountServiceImpl implements AccountService {
+
+    @Autowired
+    AccountTblMapper accountTblMapper;
+
+    @Transactional
+    @Override
+    public void debit(String userId, int money) {
+        accountTblMapper.debit(userId, money);
+    }
+}
+```
+
+### 12.10 事务传播机制说明
+
+在这个项目中，`@Transactional` 和 `@GlobalTransactional` 的关系如下：
+
+| 注解 | 作用范围 | 说明 |
+|------|---------|------|
+| `@GlobalTransactional` | 全局事务（TM） | 由 Seata 管理，协调多个服务的分支事务 |
+| `@Transactional` | 本地事务（RM） | 由 Spring 管理，保护单个服务内的数据库操作 |
+
+**关键点**：
+- `@GlobalTransactional` **不会**自动让被调用的远程方法加入全局事务
+- 被调用的远程服务需要**自己**标注 `@Transactional`，Seata 通过代理数据源自动将其注册为分支事务
+- Seata 通过 **XID 传递**（嵌入到 Feign 请求头中）来关联各个分支事务
+
+### 12.11 测试验证
+
+**入口 Controller**
+
+```java
+@RestController
+public class PurchaseRestController {
+
+    @Autowired
+    BusinessService businessService;
+
+    @GetMapping("/purchase")
+    public String purchase(@RequestParam("userId") String userId,
+                           @RequestParam("commodityCode") String commodityCode,
+                           @RequestParam("count") int orderCount) {
+        businessService.purchase(userId, commodityCode, orderCount);
+        return "business purchase success";
+    }
+}
+```
+
+**测试接口**
+
+```
+GET http://localhost:21000/purchase?userId=1&commodityCode=SKU001&count=2
+```
+
+**预期结果**：
+- 当 `count != 5` 且订单服务不抛异常时，全局事务提交，库存、订单、账户余额都更新
+- 当 `count == 5` 时，storage 服务抛异常，全局回滚，所有数据保持不变
+- 当订单服务执行到 `int i = 10 / 0` 时，全局回滚，库存扣减和账户扣减都回滚
+
+### 12.12 Seata AT 模式原理简述
+
+```
+TM (Business)                    TC (Seata Server)                RM (Order/Storage/Account)
+    │                                   │                                    │
+    ├─ @GlobalTransactional 开始 ─────>├─ 生成 XID ────────────────────────>│
+    │                                   │                                    │
+    ├─ 调用 RM 服务 ───────────────────>│<────────── 注册分支事务 ───────────┤
+    │                                   │                                    │
+    │                                   │                                    ├─ 执行业务 SQL
+    │                                   │                                    ├─ 记录 undo_log
+    │                                   │                                    ├─ 提交本地事务
+    │                                   │                                    │
+    ├─ 业务异常 ──────────────────────>├─ 收到回滚请求 ────────────────────>│
+    │                                   │                                    ├─ 根据 undo_log 回滚
+    │                                   │                                    └─ 删除 undo_log
+```
+
+**AT 模式核心**：
+1. 一阶段：业务 SQL 直接提交，同时记录前后镜像到 `undo_log`
+2. 二阶段：全局提交时异步删除 `undo_log`；全局回滚时用 `undo_log` 恢复数据
+
+### 12.13 Seata TCC 模式
+
+TCC（Try-Confirm-Cancel）是 Seata 支持的另一种分布式事务模式，与 AT 模式相比，它**不依赖数据库的 `undo_log`**，而是通过业务代码显式实现三个阶段的逻辑。
+
+#### TCC 三阶段说明
+
+| 阶段 | 名称 | 职责 | 特点 |
+|------|------|------|------|
+| **Try** | 预留资源 | 检查并预留业务资源（如冻结库存、预扣余额） | 不真正执行业务，只做资源预留和校验 |
+| **Confirm** | 确认提交 | 真正执行业务（如扣减冻结的库存、扣除预扣的余额） | 幂等操作，必须成功 |
+| **Cancel** | 取消回滚 | 释放预留的资源（如解冻库存、返还预扣余额） | 幂等操作，必须成功 |
+
+#### TCC 与 AT 模式对比
+
+| 对比项 | AT 模式 | TCC 模式 |
+|--------|---------|---------|
+| 实现方式 | 自动代理数据源，无侵入 | 需要手动实现 Try/Confirm/Cancel 三个方法 |
+| 依赖 | 需要数据库 `undo_log` 表 | 不依赖 `undo_log`，纯业务逻辑实现 |
+| 侵入性 | 低（对业务代码几乎无侵入） | 高（需要拆分业务逻辑为三个阶段） |
+| 性能 | 较好（一阶段直接提交） | 更好（无全局锁，无 undo_log 开销） |
+| 适用场景 | 通用场景，关系型数据库 | 高并发、性能敏感、非关系型数据库 |
+| 一致性 | 最终一致性 | 最终一致性 |
+| 开发成本 | 低 | 高（需要处理幂等、空回滚、悬挂等问题）|
+
+#### TCC 业务代码示例
+
+以库存扣减为例，展示 TCC 模式的实现方式：
+
+**1. 定义 TCC 接口**
+
+```java
+@LocalTCC
+public interface StorageTccService {
+
+    /**
+     * Try 阶段：预留资源（冻结库存）
+     */
+    @TwoPhaseBusinessAction(name = "storageTccAction",
+            commitMethod = "commit",
+            rollbackMethod = "rollback")
+    boolean tryDeduct(@BusinessActionContextParameter(paramName = "commodityCode") String commodityCode,
+                      @BusinessActionContextParameter(paramName = "count") int count);
+
+    /**
+     * Confirm 阶段：真正扣减库存
+     */
+    boolean commit(BusinessActionContext context);
+
+    /**
+     * Cancel 阶段：释放预留资源（解冻库存）
+     */
+    boolean rollback(BusinessActionContext context);
+}
+```
+
+> `@LocalTCC` 标记这是一个本地 TCC 服务，`@TwoPhaseBusinessAction` 定义了 Try 方法以及对应的 Commit 和 Rollback 方法名。
+
+**2. 实现 TCC 接口**
+
+```java
+@Service
+public class StorageTccServiceImpl implements StorageTccService {
+
+    @Autowired
+    private StorageTblMapper storageTblMapper;
+
+    @Override
+    public boolean tryDeduct(String commodityCode, int count) {
+        // 1. 检查库存是否充足
+        StorageTbl storage = storageTblMapper.selectByCommodityCode(commodityCode);
+        if (storage.getCount() < count) {
+            throw new RuntimeException("库存不足");
+        }
+        // 2. 冻结库存（预留资源）
+        storageTblMapper.freezeStock(commodityCode, count);
+        return true;
+    }
+
+    @Override
+    public boolean commit(BusinessActionContext context) {
+        String commodityCode = context.getActionContext("commodityCode").toString();
+        int count = Integer.parseInt(context.getActionContext("count").toString());
+        // 真正扣减库存：将冻结的库存转为实际扣减
+        storageTblMapper.confirmDeduct(commodityCode, count);
+        return true;
+    }
+
+    @Override
+    public boolean rollback(BusinessActionContext context) {
+        String commodityCode = context.getActionContext("commodityCode").toString();
+        int count = Integer.parseInt(context.getActionContext("count").toString());
+        // 释放预留资源：解冻库存
+        storageTblMapper.unfreezeStock(commodityCode, count);
+        return true;
+    }
+}
+```
+
+**3. 数据库表设计（增加冻结字段）**
+
+```sql
+CREATE TABLE storage_tbl (
+    id BIGINT PRIMARY KEY AUTO_INCREMENT,
+    commodity_code VARCHAR(255) NOT NULL COMMENT '商品编码',
+    count INT NOT NULL COMMENT '总库存',
+    freeze_count INT NOT NULL DEFAULT 0 COMMENT '冻结库存（TCC 预留）'
+);
+```
+
+**4. TM 入口调用 TCC 服务**
+
+```java
+@Service
+public class BusinessServiceImpl implements BusinessService {
+
+    @Autowired
+    private StorageTccService storageTccService;
+
+    @Autowired
+    private OrderTccService orderTccService;
+
+    @GlobalTransactional
+    @Override
+    public void purchase(String userId, String commodityCode, int orderCount) {
+        // Try 阶段：预留库存
+        storageTccService.tryDeduct(commodityCode, orderCount);
+        // Try 阶段：预留订单资源
+        orderTccService.tryCreate(userId, commodityCode, orderCount);
+        // 如果方法正常结束，TC 会自动调用各 RM 的 Confirm
+        // 如果抛出异常，TC 会自动调用各 RM 的 Rollback
+    }
+}
+```
+
+#### TCC 模式注意事项
+
+**幂等性**：Confirm 和 Cancel 方法可能被多次调用（如网络超时重试），必须保证幂等。
+
+```java
+@Override
+public boolean commit(BusinessActionContext context) {
+    // 通过唯一键或状态判断是否已经执行过
+    if (alreadyCommitted(context.getXid())) {
+        return true; // 已经处理过，直接返回成功
+    }
+    // 执行业务逻辑...
+}
+```
+
+**空回滚**：Try 阶段可能因为网络问题未执行，但 Cancel 被调用了。需要判断 Try 是否执行过。
+
+```java
+@Override
+public boolean rollback(BusinessActionContext context) {
+    // 如果 Try 阶段没有预留资源，直接返回成功
+    if (!hasFrozenStock(context)) {
+        return true;
+    }
+    // 执行回滚逻辑...
+}
+```
+
+**悬挂**：Cancel 比 Try 先执行（网络延迟），然后 Try 才到达。需要在 Try 中判断是否已经 Cancel 过。
+
+```java
+@Override
+public boolean tryDeduct(String commodityCode, int count) {
+    // 如果已经回滚过，不再执行 Try
+    if (alreadyCancelled(commodityCode)) {
+        return false;
+    }
+    // 执行预留逻辑...
+}
+```
+
+#### 模式选择建议
+
+| 场景 | 推荐模式 | 原因 |
+|------|---------|------|
+| 通用 CRUD 操作，关系型数据库 | **AT 模式** | 开发成本低，无侵入 |
+| 高并发秒杀、库存扣减 | **TCC 模式** | 性能更好，无全局锁 |
+| 涉及非关系型数据库（Redis、MongoDB）| **TCC 模式** | AT 模式不支持 |
+| 复杂业务逻辑，需要精细控制 | **TCC 模式** | 可以自定义每个阶段的逻辑 |
+| 快速开发，追求简单 | **AT 模式** | 只需 `@GlobalTransactional` 和 `@Transactional` |
+
+---
+
 ## 附录：OpenFeign vs RestTemplate
 
 | 对比项 | OpenFeign | RestTemplate |
