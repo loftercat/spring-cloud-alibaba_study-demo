@@ -2,7 +2,7 @@
 <!DOCTYPE mapper
         PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
-<mapper namespace="com.su.accounttTblMapper">
+<mapper namespace="com.su.account.mapper.AccountTblMapper">
 
     <resultMap id="BaseResultMap" type="com.su.bean.AccountTbl">
             <id property="id" column="id" jdbcType="INTEGER"/>

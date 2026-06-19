@@ -18,7 +18,6 @@ public class BusinessServiceImpl implements BusinessService {
     private OrderFeignClient orderFeignClient;
 
     @Override
-    @GlobalTransactional
     public void purchase(String userId, String commodityCode, int orderCount) {
         // 1. 扣减库存
         storageFeignClient.deduct(commodityCode, orderCount);

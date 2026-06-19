@@ -1,4 +1,4 @@
-package com.su.controller;
+package com.su.account.controller;
 
 import com.su.service.AccountService;
 import org.springframework.beans.factory.annotation.Autowired;
