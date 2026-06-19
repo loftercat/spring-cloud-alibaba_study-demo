@@ -34,6 +34,9 @@ public class OrderServiceImpl implements OrderService {
         // 4. 保存订单
         orderTblMapper.insert(orderTbl);
 
+        // 模拟异常
+        int i = 10 / 0;
+
         return orderTbl;
     }
 
