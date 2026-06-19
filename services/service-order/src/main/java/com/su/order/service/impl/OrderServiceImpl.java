@@ -1,10 +1,10 @@
-package com.su.order.service;
+package com.su.order.service.impl;
 
 import com.alibaba.csp.sentinel.annotation.SentinelResource;
 import com.alibaba.csp.sentinel.slots.block.BlockException;
-import com.su.order.feign.ProductFeignClient;
 import com.su.order.bean.Order;
-import com.su.order.service.impl.OrderService;
+import com.su.order.feign.ProductFeignClient;
+import com.su.order.service.OrderService;
 import com.su.product.bean.Product;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;

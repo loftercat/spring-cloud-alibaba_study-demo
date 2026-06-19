@@ -1,4 +1,4 @@
-package com.su.order.service.impl;
+package com.su.order.service;
 
 import com.su.order.bean.Order;
 

@@ -1,7 +1,7 @@
 package com.su.order.controller;
 
 import com.su.order.bean.Order;
-import com.su.order.service.impl.OrderService;
+import com.su.order.service.OrderService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
